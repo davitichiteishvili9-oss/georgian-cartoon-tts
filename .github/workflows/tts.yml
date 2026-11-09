@@ -13,7 +13,7 @@ on:
         required: true
         default: "Fox"
       voice1:
-        description: "First voice"
+        description: "First character voice"
         required: true
         default: "Charon"
       speaker2:
@@ -21,7 +21,7 @@ on:
         required: true
         default: "Robot"
       voice2:
-        description: "Second voice"
+        description: "Second character voice"
         required: true
         default: "Puck"
       dialogue:
@@ -29,21 +29,21 @@ on:
         required: true
         default: |
           Fox: რობოტო, რას აკეთებ?
-          Robot: უფროსო, ყავის აპარატი შემთხვევით ავაფეთქე!
+          Robot: უფროსო, ყავის აპარატი ავაფეთქე!
 
 jobs:
   voice:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - name: Install Gemini
-        run: pip install --upgrade google-genai
+      - name: Install Google Gemini
+        run: pip install --upgrade "google-genai>=3.0.0"
 
-      - name: Generate voice
+      - name: Generate Georgian dialogue
         env:
           GEMINI_API_KEY: ${{ secrets.GEO }}
           EPISODE: ${{ inputs.episode }}
@@ -55,71 +55,57 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import base64
           import wave
           from google import genai
-          from google.genai import types
 
           client = genai.Client(
               api_key=os.environ["GEMINI_API_KEY"]
           )
 
-          a = os.environ["SPEAKER1"]
-          b = os.environ["SPEAKER2"]
-
           prompt = (
-              "Read this cartoon dialogue in natural "
-              "Georgian with expressive acting. "
-              "Speak only the dialogue.\n\n"
+              "Perform this cartoon conversation "
+              "in natural expressive Georgian. "
+              "Read only the following lines:\n\n"
               + os.environ["DIALOGUE"]
           )
 
-          def voice(speaker, name):
-              return types.SpeakerVoiceConfig(
-                  speaker=speaker,
-                  voice_config=types.VoiceConfig(
-                      prebuilt_voice_config=(
-                          types.PrebuiltVoiceConfig(
-                              voice_name=name
-                          )
-                      )
-                  )
-              )
-
-          response = client.models.generate_content(
+          interaction = client.interactions.create(
               model="gemini-3.1-flash-tts-preview",
-              contents=prompt,
-              config=types.GenerateContentConfig(
-                  response_modalities=["AUDIO"],
-                  speech_config=types.SpeechConfig(
-                      multi_speaker_voice_config=(
-                          types.MultiSpeakerVoiceConfig(
-                              speaker_voice_configs=[
-                                  voice(a, os.environ["VOICE1"]),
-                                  voice(b, os.environ["VOICE2"])
-                              ]
-                          )
-                      )
-                  )
-              )
+              input=prompt,
+              response_format={"type": "audio"},
+              generation_config={
+                  "speech_config": [
+                      {
+                          "speaker": os.environ["SPEAKER1"],
+                          "voice": os.environ["VOICE1"]
+                      },
+                      {
+                          "speaker": os.environ["SPEAKER2"],
+                          "voice": os.environ["VOICE2"]
+                      }
+                  ]
+              }
           )
 
-          data = (
-              response.candidates[0]
-              .content.parts[0].inline_data.data
-          )
+          audio = interaction.output_audio
+          if not audio or not audio.data:
+              raise RuntimeError("Gemini returned no audio")
 
-          with wave.open("dialogue.wav", "wb") as wf:
-              wf.setnchannels(1)
-              wf.setsampwidth(2)
-              wf.setframerate(24000)
-              wf.writeframes(data)
+          pcm = base64.b64decode(audio.data)
 
-          print("Audio ready:", os.environ["EPISODE"])
+          with wave.open("dialogue.wav", "wb") as f:
+              f.setnchannels(1)
+              f.setsampwidth(2)
+              f.setframerate(24000)
+              f.writeframes(pcm)
+
+          print("Created dialogue.wav")
           PY
 
       - name: Save audio
         uses: actions/upload-artifact@v4
         with:
-          name: Cartoon-Dialogue
+          name: Georgian-Cartoon-Audio
           path: dialogue.wav
           if-no-files-found: error
