@@ -1,0 +1,82 @@
+
+name: Georgian Cartoon Voice
+
+on:
+  workflow_dispatch:
+    inputs:
+      fox:
+        description: "მელას სიტყვები"
+        required: true
+        default: "რობოტო, რას აკეთებ?"
+      robot:
+        description: "რობოტის სიტყვები"
+        required: true
+        default: "უფროსო, ყავა შემთხვევით ავაფეთქე!"
+
+jobs:
+  tts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Gemini
+        run: pip install --upgrade "google-genai>=2.25.0"
+
+      - name: Generate Georgian speech
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEO }}
+          FOX: ${{ inputs.fox }}
+          ROBOT: ${{ inputs.robot }}
+        run: |
+          python - <<'PY'
+          import os
+          import base64
+          from google import genai
+
+          client = genai.Client()
+          turns = [
+              ("Fox", os.environ["FOX"],
+               "Deep, grumpy, funny voice. Natural Georgian."),
+              ("Robot", os.environ["ROBOT"],
+               "Cheerful, energetic voice. Natural Georgian."),
+          ]
+          content = [
+              {
+                  "type": "text",
+                  "text": line,
+                  "annotations": [{
+                      "type": "speech_metadata",
+                      "speaker": speaker,
+                      "style": style
+                  }]
+              }
+              for speaker, line, style in turns
+          ]
+
+          result = client.interactions.create(
+              model="gemini-3.8-flash-tts",
+              input=[{
+                  "type": "user_input",
+                  "content": content
+              }],
+              response_format={"type": "audio"},
+              generation_config={
+                  "speech_config": {
+                      "speakers": [
+                          {"speaker": "Fox", "voice": "Charon"},
+                          {"speaker": "Robot", "voice": "Puck"}
+                      ]
+                  }
+              }
+          )
+
+          with open("dialogue.wav", "wb") as f:
+              f.write(base64.b64decode(
+                  result.output_audio.data
+              ))
+          print("Audio generated successfully")
+          PY
+
+      - name: Save audio
+        uses: actions/upload-artifact@v4
+        with:
+          name: Georgian-Cartoon-Audio
+          path: dialogue.wav
