@@ -4,79 +4,122 @@ name: Georgian Cartoon Voice
 on:
   workflow_dispatch:
     inputs:
-      fox:
-        description: "მელას სიტყვები"
+      episode:
+        description: "Episode name"
         required: true
-        default: "რობოტო, რას აკეთებ?"
-      robot:
-        description: "რობოტის სიტყვები"
+        default: "Episode 1"
+      speaker1:
+        description: "First character"
         required: true
-        default: "უფროსო, ყავა შემთხვევით ავაფეთქე!"
+        default: "Fox"
+      voice1:
+        description: "First voice"
+        required: true
+        default: "Charon"
+      speaker2:
+        description: "Second character"
+        required: true
+        default: "Robot"
+      voice2:
+        description: "Second voice"
+        required: true
+        default: "Puck"
+      dialogue:
+        description: "Georgian dialogue"
+        required: true
+        default: |
+          Fox: რობოტო, რას აკეთებ?
+          Robot: უფროსო, ყავის აპარატი შემთხვევით ავაფეთქე!
 
 jobs:
-  tts:
+  voice:
     runs-on: ubuntu-latest
-    steps:
-      - name: Install Gemini
-        run: pip install --upgrade "google-genai>=2.25.0"
 
-      - name: Generate Georgian speech
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Gemini
+        run: pip install --upgrade google-genai
+
+      - name: Generate voice
         env:
           GEMINI_API_KEY: ${{ secrets.GEO }}
-          FOX: ${{ inputs.fox }}
-          ROBOT: ${{ inputs.robot }}
+          EPISODE: ${{ inputs.episode }}
+          SPEAKER1: ${{ inputs.speaker1 }}
+          SPEAKER2: ${{ inputs.speaker2 }}
+          VOICE1: ${{ inputs.voice1 }}
+          VOICE2: ${{ inputs.voice2 }}
+          DIALOGUE: ${{ inputs.dialogue }}
         run: |
           python - <<'PY'
           import os
-          import base64
+          import wave
           from google import genai
+          from google.genai import types
 
-          client = genai.Client()
-          turns = [
-              ("Fox", os.environ["FOX"],
-               "Deep, grumpy, funny voice. Natural Georgian."),
-              ("Robot", os.environ["ROBOT"],
-               "Cheerful, energetic voice. Natural Georgian."),
-          ]
-          content = [
-              {
-                  "type": "text",
-                  "text": line,
-                  "annotations": [{
-                      "type": "speech_metadata",
-                      "speaker": speaker,
-                      "style": style
-                  }]
-              }
-              for speaker, line, style in turns
-          ]
-
-          result = client.interactions.create(
-              model="gemini-3.8-flash-tts",
-              input=[{
-                  "type": "user_input",
-                  "content": content
-              }],
-              response_format={"type": "audio"},
-              generation_config={
-                  "speech_config": {
-                      "speakers": [
-                          {"speaker": "Fox", "voice": "Charon"},
-                          {"speaker": "Robot", "voice": "Puck"}
-                      ]
-                  }
-              }
+          client = genai.Client(
+              api_key=os.environ["GEMINI_API_KEY"]
           )
 
-          with open("dialogue.wav", "wb") as f:
-              f.write(base64.b64decode(
-                  result.output_audio.data
-              ))
-          print("Audio generated successfully")
+          a = os.environ["SPEAKER1"]
+          b = os.environ["SPEAKER2"]
+
+          prompt = (
+              "Read this cartoon dialogue in natural "
+              "Georgian with expressive acting. "
+              "Speak only the dialogue.\n\n"
+              + os.environ["DIALOGUE"]
+          )
+
+          def voice(speaker, name):
+              return types.SpeakerVoiceConfig(
+                  speaker=speaker,
+                  voice_config=types.VoiceConfig(
+                      prebuilt_voice_config=(
+                          types.PrebuiltVoiceConfig(
+                              voice_name=name
+                          )
+                      )
+                  )
+              )
+
+          response = client.models.generate_content(
+              model="gemini-3.1-flash-tts-preview",
+              contents=prompt,
+              config=types.GenerateContentConfig(
+                  response_modalities=["AUDIO"],
+                  speech_config=types.SpeechConfig(
+                      multi_speaker_voice_config=(
+                          types.MultiSpeakerVoiceConfig(
+                              speaker_voice_configs=[
+                                  voice(a, os.environ["VOICE1"]),
+                                  voice(b, os.environ["VOICE2"])
+                              ]
+                          )
+                      )
+                  )
+              )
+          )
+
+          data = (
+              response.candidates[0]
+              .content.parts[0].inline_data.data
+          )
+
+          with wave.open("dialogue.wav", "wb") as wf:
+              wf.setnchannels(1)
+              wf.setsampwidth(2)
+              wf.setframerate(24000)
+              wf.writeframes(data)
+
+          print("Audio ready:", os.environ["EPISODE"])
           PY
 
       - name: Save audio
         uses: actions/upload-artifact@v4
         with:
-          name: Georgian-Cartoon-Audio
+          name: Cartoon-Dialogue
           path: dialogue.wav
+          if-no-files-found: error
